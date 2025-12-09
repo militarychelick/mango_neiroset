@@ -1,7 +1,7 @@
 import os
 import torch
 import torch.nn.functional as F
-from torchvision import transforms
+from torchvision import transforms, models
 from PIL import Image
 
 # ======================================
@@ -9,9 +9,7 @@ from PIL import Image
 # ======================================
 IMG_SIZE = 224
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "mango_disease_model_pytorch.pth")
-SELF_LEARN_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "../self_learn")
-)
+SELF_LEARN_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../self_learn"))
 os.makedirs(SELF_LEARN_DIR, exist_ok=True)
 
 # ======================================
@@ -28,30 +26,28 @@ DISEASES_RU = [
 ]
 
 # ======================================
-# ЗАГРУЗКА PyTorch-МОДЕЛИ
+# ЗАГРУЗКА МОДЕЛИ
 # ======================================
 print("Загрузка PyTorch модели...")
-
 if not os.path.exists(MODEL_PATH):
     raise FileNotFoundError(f"Файл модели не найден: {MODEL_PATH}")
 
 checkpoint = torch.load(MODEL_PATH, map_location="cpu")
-
-# Создаем такую же сеть MobileNetV2
-from torchvision import models
 model = models.mobilenet_v2(weights=None)
 model.classifier[1] = torch.nn.Linear(model.last_channel, len(DISEASES_EN))
 model.load_state_dict(checkpoint["model_state"])
 model.eval()
-
 print("Модель загружена.")
 
 # ======================================
 # Transform для предсказания
 # ======================================
 predict_tf = transforms.Compose([
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    transforms.Resize(256),
+    transforms.CenterCrop(IMG_SIZE),
     transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                         std=[0.229, 0.224, 0.225])
 ])
 
 # ======================================
@@ -67,12 +63,10 @@ def predict_disease(img_path: str):
 
     class_idx = int(torch.argmax(probs).item())
     confidence = float(probs[class_idx])
-
     return class_idx, confidence
 
-
 # ======================================
-# ДООБУЧЕНИЕ МОДЕЛИ (простая версия)
+# ДО-ОБУЧЕНИЕ МОДЕЛИ (заглушка)
 # ======================================
 def retrain_model():
     print("[SELF-TRAIN] Дообучение пока отключено для PyTorch версии.")

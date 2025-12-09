@@ -1,18 +1,11 @@
 import telebot
 from telebot import types
-from model.filters import predict_disease
+from model.model import predict_disease, DISEASES_EN  # DISEASES_EN вместо CLASSES
 import os
 import sys
 
 def retrain_model():
-    print("[SELF-LEARN] Начало дообучения модели...")
-
-    try:
-        from model.model import fine_tune_model
-        fine_tune_model(SELF_LEARN_DIR)
-        print("[SELF-LEARN] Дообучение завершено.")
-    except Exception as e:
-        print("[SELF-LEARN] Ошибка при дообучении:", e)
+    print("[SELF-LEARN] Дообучение пока отключено для PyTorch версии.")
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
@@ -238,6 +231,7 @@ def process_photo(chat_id, photo_path):
         lang = user_lang.get(chat_id, "RU")
 
         # === ПРЕДСКАЗАНИЕ ===
+        from model.model import predict_disease, DISEASES_EN  # DISEASES_EN вместо CLASSES
         class_idx, confidence = predict_disease(photo_path)
 
         if confidence < 0.75:
@@ -249,7 +243,19 @@ def process_photo(chat_id, photo_path):
             return
 
         disease_en = DISEASES_EN[class_idx]
-        disease = DISEASES_RU[class_idx] if lang == "RU" else disease_en
+
+        ru_map = {
+            "Anthracnose": "Антракноз",
+            "Bacterial Canker": "Бактериальный рак",
+            "Cutting Weevil": "Долгоносик",
+            "Die Back": "Отмирание ветвей",
+            "Gall Midge": "Галлица",
+            "Healthy": "Здоровый",
+            "Powdery Mildew": "Мучнистая роса",
+            "Sooty Mould": "Сажа"
+        }
+
+        disease = ru_map[disease_en] if lang == "RU" else disease_en
 
         # кнопки
         markup = types.InlineKeyboardMarkup()
@@ -292,6 +298,7 @@ def process_photo(chat_id, photo_path):
             "Ошибка при обработке изображения 😥",
             chat_id
         ))
+
 
 # ===== Запуск =====
 if __name__ == "__main__":
