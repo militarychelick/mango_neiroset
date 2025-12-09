@@ -32,18 +32,27 @@ TOKEN = "8285788264:AAHjTLJ5aWeelqyRUC2oA1K1PU62wDXtPb0"  # <- вставь сю
 bot = telebot.TeleBot(TOKEN)
 
 # Папка для временного сохранения фото
-PHOTO_DIR = "bot_photos"
-os.makedirs(PHOTO_DIR, exist_ok=True)
-
 # ===== Болезни =====
 DISEASES_EN = [
-    "Anthracnose", "Bacterial Canker", "Cutting Weevil", "Die Back",
-    "Gall Midge", "Healthy", "Powdery Mildew", "Sooty Mould"
+    "Anthracnose",
+    "Bacterial Canker",
+    "Cutting Weevil",
+    "Die Back",
+    "Gall Midge",
+    "Healthy",
+    "Powdery Mildew",
+    "Sooty Mould"
 ]
 
 DISEASES_RU = [
-    "Антракноз", "Бактериальный рак", "Долгоносик", "Отмирание ветвей",
-    "Галлица", "Здоровый", "Мучнистая роса", "Сажа"
+    "Антракноз",
+    "Бактериальный рак",
+    "Долгоносик",
+    "Отмирание ветвей",
+    "Галлица",
+    "Здоровый",
+    "Мучнистая роса",
+    "Сажа"
 ]
 
 # ===== Пользовательские состояния =====
@@ -90,7 +99,7 @@ def info(message):
     bot.send_message(OWNER_ID,
                      "ℹ <b>Bot status</b>\n"
                      f"Processed photos: {len(user_last_photo)}\n"
-                     f"Loaded model: mango_disease_model.h5\n",
+                     f"Loaded model: mango_disease_model_pytorch.pth\n",
                      parse_mode="HTML")
 
 
@@ -194,34 +203,23 @@ def callback(call):
     elif call.data == "back":
         start(call.message)
 
-
-# ===== Обработка фото =====
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     chat_id = message.chat.id
 
-    # Получаем файл
+    # Получаем файл в бинарном виде
     file_info = bot.get_file(message.photo[-1].file_id)
     downloaded_file = bot.download_file(file_info.file_path)
 
-    # Временный путь
-    photo_path = os.path.join(PHOTO_DIR, f"{chat_id}_{file_info.file_path.split('/')[-1]}")
+    # Передаем напрямую в процессинг без сохранения
+    from io import BytesIO
+    photo_bytes = BytesIO(downloaded_file)
 
-    # --- Ограничение размера 5 MB + сжатие ---
-    if len(downloaded_file) > 5 * 1024 * 1024:
-        from io import BytesIO
-        from PIL import Image
+    # Сохраняем в RAM
+    user_last_photo[chat_id] = photo_bytes
 
-        img = Image.open(BytesIO(downloaded_file))
-        img = img.convert("RGB")
-        img.save(photo_path, optimize=True, quality=70)
-    else:
-        with open(photo_path, 'wb') as new_file:
-            new_file.write(downloaded_file)
+    process_photo(chat_id, photo_bytes)
 
-    user_last_photo[chat_id] = photo_path
-
-    process_photo(chat_id, photo_path)
 
 # ===== Обработка и вывод результата =====
 def process_photo(chat_id, photo_path):

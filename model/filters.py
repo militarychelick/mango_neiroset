@@ -4,7 +4,7 @@ from tensorflow.keras.models import load_model
 import os
 
 # Загружаем модель заболевания
-MODEL_PATH = os.path.join("model", "mango_disease_model.h5")
+MODEL_PATH = os.path.join("model", "mango_disease_model_pytorch.pth")
 disease_model = load_model(MODEL_PATH)
 
 # IMAGENET-сеть для определения формы листа

@@ -9,7 +9,7 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 # ===============================
 IMG_SIZE = (224, 224)
 
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "mango_disease_model.h5")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "mango_disease_model_pytorch.pth")
 
 SELF_LEARN_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../self_learn")
