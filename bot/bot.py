@@ -203,23 +203,30 @@ def callback(call):
     elif call.data == "back":
         start(call.message)
 
+import uuid
+from io import BytesIO
+
+TEMP_DIR = "tmp"
+os.makedirs(TEMP_DIR, exist_ok=True)
+
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     chat_id = message.chat.id
 
-    # Получаем файл в бинарном виде
+    # загружаем фото
     file_info = bot.get_file(message.photo[-1].file_id)
     downloaded_file = bot.download_file(file_info.file_path)
 
-    # Передаем напрямую в процессинг без сохранения
-    from io import BytesIO
-    photo_bytes = BytesIO(downloaded_file)
+    # сохраняем во временный файл
+    filename = f"{uuid.uuid4().hex}.jpg"
+    temp_path = os.path.join(TEMP_DIR, filename)
 
-    # Сохраняем в RAM
-    user_last_photo[chat_id] = photo_bytes
+    with open(temp_path, "wb") as f:
+        f.write(downloaded_file)
 
-    process_photo(chat_id, photo_bytes)
+    user_last_photo[chat_id] = temp_path
 
+    process_photo(chat_id, temp_path)
 
 # ===== Обработка и вывод результата =====
 def process_photo(chat_id, photo_path):
@@ -233,7 +240,6 @@ def process_photo(chat_id, photo_path):
         # === ПРЕДСКАЗАНИЕ ===
         class_idx, confidence = predict_disease(photo_path)
 
-        # Порог уверенности (всё ниже — "не лист манго")
         if confidence < 0.75:
             bot.send_message(chat_id, get_text(
                 "Please send a photo of a mango leaf 🍃",
@@ -245,46 +251,35 @@ def process_photo(chat_id, photo_path):
         disease_en = DISEASES_EN[class_idx]
         disease = DISEASES_RU[class_idx] if lang == "RU" else disease_en
 
-        # === КНОПКИ ===
+        # кнопки
         markup = types.InlineKeyboardMarkup()
-        btn_again = types.InlineKeyboardButton(
-            get_text("Analyze again", "Переанализировать", chat_id),
-            callback_data="again"
+        markup.add(
+            types.InlineKeyboardButton(get_text("Analyze again", "Переанализировать", chat_id), callback_data="again"),
+            types.InlineKeyboardButton(get_text("Back", "Назад", chat_id), callback_data="back")
         )
-        btn_back = types.InlineKeyboardButton(
-            get_text("Back", "Назад", chat_id),
-            callback_data="back"
-        )
-        markup.add(btn_again, btn_back)
 
-        # ========== ОТПРАВЛЯЕМ ФОТО + РЕЗУЛЬТАТ ==========
+        # отправляем фото
         with open(photo_path, 'rb') as img:
             bot.send_photo(
                 chat_id,
                 img,
-                caption=(
-                    f"{get_text('Result', 'Результат', chat_id)}: {disease}\n"
-                    f"{get_text('Confidence', 'Вероятность', chat_id)}: {confidence*100:.1f}%"
-                ),
+                caption=f"{get_text('Result', 'Результат', chat_id)}: {disease}\n"
+                        f"{get_text('Confidence', 'Вероятность', chat_id)}: {confidence*100:.1f}%",
                 reply_markup=markup
             )
 
-        # ========== АВТОСАМООБУЧЕНИЕ (только >95%) ==========
+        # === ДО-ОБУЧЕНИЕ ===
         if confidence > 0.95:
             class_dir = os.path.join("self_learn", disease_en)
             os.makedirs(class_dir, exist_ok=True)
 
-            filename = os.path.basename(photo_path)
-            save_path = os.path.join(class_dir, filename)
-
-            # безопасно копируем, чтобы не ломать исходные файлы
+            save_path = os.path.join(class_dir, os.path.basename(photo_path))
             import shutil
             shutil.copy(photo_path, save_path)
 
             SELF_LEARN_COUNTER += 1
-            print(f"[SELF-LEARN] Сохранено фото: {save_path}. Всего: {SELF_LEARN_COUNTER}")
+            print(f"[SELF-LEARN] Saved: {save_path}. Total: {SELF_LEARN_COUNTER}")
 
-            # Авто-дообучение каждые 20 фото
             if SELF_LEARN_COUNTER >= 20:
                 SELF_LEARN_COUNTER = 0
                 import threading

@@ -1,24 +1,22 @@
 import os
-import numpy as np
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing import image
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
+import torch
+import torch.nn.functional as F
+from torchvision import transforms
+from PIL import Image
 
-# ===============================
-# НАСТРОЙКИ
-# ===============================
-IMG_SIZE = (224, 224)
-
+# ======================================
+# ПУТИ
+# ======================================
+IMG_SIZE = 224
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "mango_disease_model_pytorch.pth")
-
 SELF_LEARN_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../self_learn")
 )
 os.makedirs(SELF_LEARN_DIR, exist_ok=True)
 
-# ===============================
+# ======================================
 # КЛАССЫ
-# ===============================
+# ======================================
 DISEASES_EN = [
     "Anthracnose", "Bacterial Canker", "Cutting Weevil", "Die Back",
     "Gall Midge", "Healthy", "Powdery Mildew", "Sooty Mould"
@@ -29,72 +27,52 @@ DISEASES_RU = [
     "Галлица", "Здоровый", "Мучнистая роса", "Сажа"
 ]
 
-# ===============================
-# ЗАГРУЗКА МОДЕЛИ
-# ===============================
-print("Загрузка модели...")
+# ======================================
+# ЗАГРУЗКА PyTorch-МОДЕЛИ
+# ======================================
+print("Загрузка PyTorch модели...")
 
 if not os.path.exists(MODEL_PATH):
     raise FileNotFoundError(f"Файл модели не найден: {MODEL_PATH}")
 
-MODEL = load_model(MODEL_PATH)
+checkpoint = torch.load(MODEL_PATH, map_location="cpu")
+
+# Создаем такую же сеть MobileNetV2
+from torchvision import models
+model = models.mobilenet_v2(weights=None)
+model.classifier[1] = torch.nn.Linear(model.last_channel, len(DISEASES_EN))
+model.load_state_dict(checkpoint["model_state"])
+model.eval()
 
 print("Модель загружена.")
 
-# ===============================
-# ПРЕДСКАЗАНИЕ
-# ===============================
-def predict_disease(img_path: str):
-    img = image.load_img(img_path, target_size=IMG_SIZE)
-    X = image.img_to_array(img) / 255.0
-    X = np.expand_dims(X, axis=0)
+# ======================================
+# Transform для предсказания
+# ======================================
+predict_tf = transforms.Compose([
+    transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    transforms.ToTensor(),
+])
 
-    preds = MODEL.predict(X)
-    class_idx = int(np.argmax(preds))
-    confidence = float(preds[0][class_idx])
+# ======================================
+# ФУНКЦИЯ ПРЕДСКАЗАНИЯ
+# ======================================
+def predict_disease(img_path: str):
+    img = Image.open(img_path).convert("RGB")
+    tensor = predict_tf(img).unsqueeze(0)
+
+    with torch.no_grad():
+        logits = model(tensor)
+        probs = F.softmax(logits, dim=1)[0]
+
+    class_idx = int(torch.argmax(probs).item())
+    confidence = float(probs[class_idx])
 
     return class_idx, confidence
 
 
-# ===============================
-# ДО-ОБУЧЕНИЕ МОДЕЛИ
-# ===============================
+# ======================================
+# ДООБУЧЕНИЕ МОДЕЛИ (простая версия)
+# ======================================
 def retrain_model():
-    global MODEL  # ← ВАЖНО: ставим САМОЕ ПЕРВОЕ в функции
-
-    print("[SELF-TRAIN] Запуск дообучения...")
-
-    self_data_path = SELF_LEARN_DIR
-
-    # Проверка наличия новых данных
-    classes = [
-        d for d in os.listdir(self_data_path)
-        if os.path.isdir(os.path.join(self_data_path, d))
-    ]
-
-    if not classes:
-        print("[SELF-TRAIN] Новых данных нет.")
-        return
-
-    print(f"[SELF-TRAIN] Найдены данные классов: {classes}")
-
-    datagen = ImageDataGenerator(rescale=1./255)
-
-    generator = datagen.flow_from_directory(
-        self_data_path,
-        target_size=IMG_SIZE,
-        batch_size=4,
-        class_mode='categorical',
-        shuffle=True
-    )
-
-    # обучаем 1 эпоху
-    MODEL.fit(generator, epochs=1)
-
-    # сохраняем обновлённую модель
-    MODEL.save(MODEL_PATH)
-    print("[SELF-TRAIN] Модель обновлена и сохранена.")
-
-    # перезагружаем новую модель, чтобы бот работал на новых весах
-    MODEL = load_model(MODEL_PATH)
-    print("[SELF-TRAIN] Модель перезагружена.")
+    print("[SELF-TRAIN] Дообучение пока отключено для PyTorch версии.")
