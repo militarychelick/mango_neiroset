@@ -1,5 +1,0 @@
-numpy
-tensorflow
-pillow
-opencv-python
-pyTelegramBotAPI

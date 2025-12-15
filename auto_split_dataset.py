@@ -6,7 +6,7 @@ from tqdm import tqdm
 DATA_FULL = "data_full"
 DATA_SPLIT = "data_split"
 
-LIMIT_PER_CLASS = 3000   # <<< Вот это ограничивает
+LIMIT_PER_CLASS = 3000
 TRAIN_P = 0.70
 VAL_P = 0.15
 TEST_P = 0.15

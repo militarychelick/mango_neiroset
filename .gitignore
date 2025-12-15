@@ -1,0 +1,11 @@
+venv310/
+venv/
+__pycache__/
+.idea/
+tmp/
+self_learn/
+*.pth
+*.pt
+*.jpg
+*.png
+*.jpeg

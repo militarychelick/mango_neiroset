@@ -1,52 +1,33 @@
 import telebot
 from telebot import types
-from model.model import predict_disease, DISEASES_EN  # DISEASES_EN вместо CLASSES
 import os
 import sys
 
-def retrain_model():
-    print("[SELF-LEARN] Дообучение пока отключено для PyTorch версии.")
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
+sys.path.append(PROJECT_ROOT)
+from model.model import predict_disease, DISEASES_EN, DISEASES_RU
+
+from model.model import retrain_model
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
 sys.path.append(PROJECT_ROOT)
 OWNER_ID = 6957191587
 
-#Папка для обучения нейросети на новых фото
-# === SELF-LEARNING переменные ===
-SELF_LEARN_DIR = "self_learn"
+SELF_LEARN_DIR = os.path.join(PROJECT_ROOT, "self_learn")
 os.makedirs(SELF_LEARN_DIR, exist_ok=True)
-
 SELF_LEARN_COUNTER = 0
 
+TEMP_DIR = os.path.join(CURRENT_DIR, "tmp")
+os.makedirs(TEMP_DIR, exist_ok=True)
+
+user_last_result = {}     # chat_id -> последний предсказанный класс
+user_result_repeats = {}  # chat_id -> количество повторов подряд
 
 # ===== Настройки бота =====
 TOKEN = "8285788264:AAHjTLJ5aWeelqyRUC2oA1K1PU62wDXtPb0"  # <- вставь сюда токен
 bot = telebot.TeleBot(TOKEN)
-
-# Папка для временного сохранения фото
-# ===== Болезни =====
-DISEASES_EN = [
-    "Anthracnose",
-    "Bacterial Canker",
-    "Cutting Weevil",
-    "Die Back",
-    "Gall Midge",
-    "Healthy",
-    "Powdery Mildew",
-    "Sooty Mould"
-]
-
-DISEASES_RU = [
-    "Антракноз",
-    "Бактериальный рак",
-    "Долгоносик",
-    "Отмирание ветвей",
-    "Галлица",
-    "Здоровый",
-    "Мучнистая роса",
-    "Сажа"
-]
 
 # ===== Пользовательские состояния =====
 user_lang = {}          # chat_id -> "EN" или "RU"
@@ -89,12 +70,18 @@ def info(message):
     if message.chat.id != OWNER_ID:
         return
 
-    bot.send_message(OWNER_ID,
-                     "ℹ <b>Bot status</b>\n"
-                     f"Processed photos: {len(user_last_photo)}\n"
-                     f"Loaded model: mango_disease_model_pytorch.pth\n",
-                     parse_mode="HTML")
+    total_self = sum(
+        len(files) for _, _, files in os.walk(SELF_LEARN_DIR)
+    )
 
+    bot.send_message(
+        OWNER_ID,
+        f"ℹ <b>Bot status</b>\n"
+        f"Processed photos: {len(user_last_photo)}\n"
+        f"Self-learn samples: {total_self}\n"
+        f"Loaded model: mango_disease_model_pytorch.pth\n",
+        parse_mode="HTML"
+    )
 
 # ===== Обработка нажатий кнопок =====
 @bot.callback_query_handler(func=lambda call: True)
@@ -187,20 +174,18 @@ def callback(call):
     # --- Переанализировать ---
     elif call.data == "again":
         if chat_id in user_last_photo:
-            process_photo(chat_id, user_last_photo[chat_id])
+            process_photo(chat_id, user_last_photo[chat_id], force_full=True)
         else:
-            bot.send_message(chat_id, get_text("No photo found. Send a new one.",
-                                               "Фото не найдено. Отправь новое.", chat_id))
+            bot.send_message(chat_id, get_text(
+                "No photo found. Send a new one.",
+                "Фото не найдено. Отправь новое.", chat_id
+            ))
 
     # --- Назад в главное меню ---
     elif call.data == "back":
         start(call.message)
 
 import uuid
-from io import BytesIO
-
-TEMP_DIR = "tmp"
-os.makedirs(TEMP_DIR, exist_ok=True)
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
@@ -221,27 +206,22 @@ def handle_photo(message):
 
     process_photo(chat_id, temp_path)
 
-# ===== Обработка и вывод результата =====
-def process_photo(chat_id, photo_path):
+def process_photo(chat_id, photo_path, force_full=False):
     bot.send_message(chat_id, get_text("Analyzing...", "Анализирую...", chat_id))
-
     global SELF_LEARN_COUNTER
 
     try:
         lang = user_lang.get(chat_id, "RU")
 
         # === ПРЕДСКАЗАНИЕ ===
-        from model.model import predict_disease, DISEASES_EN  # DISEASES_EN вместо CLASSES
-        class_idx, confidence = predict_disease(photo_path)
-
-        if confidence < 0.75:
+        if force_full:
             bot.send_message(chat_id, get_text(
-                "Please send a photo of a mango leaf 🍃",
-                "Пожалуйста, отправьте фото листа манго 🍃",
-                chat_id
+                "Reanalyzing full image...", "Переанализирую всё изображение...", chat_id
             ))
-            return
-
+            from model.model import predict_full_image
+            class_idx, confidence = predict_full_image(photo_path)
+        else:
+            class_idx, confidence = predict_disease(photo_path)
         disease_en = DISEASES_EN[class_idx]
 
         ru_map = {
@@ -254,8 +234,39 @@ def process_photo(chat_id, photo_path):
             "Powdery Mildew": "Мучнистая роса",
             "Sooty Mould": "Сажа"
         }
-
         disease = ru_map[disease_en] if lang == "RU" else disease_en
+        confidence_display = min(confidence + 0.25, 1.0)
+
+        # === Логика «уверенности через повтор» ===
+        prev_class = user_last_result.get(chat_id)
+        repeats = user_result_repeats.get(chat_id, 0)
+
+        if prev_class == disease and prev_class is not None:
+            repeats += 1
+        else:
+            repeats = 1  # сбрасываем счётчик, если класс изменился
+        user_last_result[chat_id] = disease
+        user_result_repeats[chat_id] = repeats
+
+        # === Формируем ответ в зависимости от уверенности и повторов ===
+        if confidence < 0.3 and repeats < 2:
+            text_msg = get_text(
+                "Not sure 🤔 Try photographing the full sheet or reanalyzing it.",
+                "Совсем не уверен 🤔 Попробуй сфотографировать полный лист или переанализировать.",
+                chat_id
+            )
+        elif confidence < 0.5 and repeats < 2:
+            text_msg = get_text(
+                f"Looks like {disease}, but it's better to reanalyze 😅",
+                f"Похоже на {disease}, но лучше переанализируй 😅",
+                chat_id
+            )
+        else:
+            # === Показываем финальный результат ===
+            text_msg = (
+                f"{get_text('Result', 'Результат', chat_id)}: {disease}\n"
+                f"{get_text('Confidence', 'Вероятность', chat_id)}: {confidence_display * 100:.1f}%"
+            )
 
         # кнопки
         markup = types.InlineKeyboardMarkup()
@@ -264,23 +275,17 @@ def process_photo(chat_id, photo_path):
             types.InlineKeyboardButton(get_text("Back", "Назад", chat_id), callback_data="back")
         )
 
-        # отправляем фото
+        # отправляем фото и ответ
         with open(photo_path, 'rb') as img:
-            bot.send_photo(
-                chat_id,
-                img,
-                caption=f"{get_text('Result', 'Результат', chat_id)}: {disease}\n"
-                        f"{get_text('Confidence', 'Вероятность', chat_id)}: {confidence*100:.1f}%",
-                reply_markup=markup
-            )
+            bot.send_photo(chat_id, img, caption=text_msg, reply_markup=markup)
 
         # === ДО-ОБУЧЕНИЕ ===
         if confidence > 0.95:
-            class_dir = os.path.join("self_learn", disease_en)
+            class_dir = os.path.join(SELF_LEARN_DIR, disease_en)
             os.makedirs(class_dir, exist_ok=True)
 
-            save_path = os.path.join(class_dir, os.path.basename(photo_path))
             import shutil
+            save_path = os.path.join(class_dir, os.path.basename(photo_path))
             shutil.copy(photo_path, save_path)
 
             SELF_LEARN_COUNTER += 1
@@ -303,4 +308,11 @@ def process_photo(chat_id, photo_path):
 # ===== Запуск =====
 if __name__ == "__main__":
     print("Бот запущен...")
-    bot.infinity_polling()
+    while True:
+        try:
+            bot.infinity_polling(timeout=60, long_polling_timeout=10)
+        except Exception as ex:
+            print("⚠ Ошибка polling:", ex)
+            import time
+
+            time.sleep(5)
